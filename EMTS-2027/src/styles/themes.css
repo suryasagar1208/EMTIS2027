@@ -1,0 +1,81 @@
+/*
+ * ETIMS 2027 — Customizable Design Token System
+ * ---------------------------------------------------------------------------
+ * Update the RGB triplets, font families, radii, borders, or surface rules
+ * below to restyle the entire website globally without editing components.
+ *
+ * Supported themes:
+ *   - "glass" (Default): Refined academic Glassmorphism
+ *   - "swiss"          : Minimalist International Typographic (Swiss) Style
+ */
+
+:root,
+[data-theme='glass'] {
+  /* Core Palette (RGB channels for Tailwind opacity modifiers) */
+  --color-canvas: 243 245 249;
+  --color-surface: 255 255 255;
+  --color-surface-muted: 236 240 247;
+  --color-ink: 18 24 38;
+  --color-ink-muted: 74 85 104;
+  --color-accent: 112 24 41;
+  --color-accent-strong: 84 16 30;
+  --color-accent-secondary: 176 124 36;
+  --color-border: 148 163 184;
+
+  /* Typography */
+  --font-sans: 'Inter', system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+  --font-serif: 'Newsreader', Georgia, 'Times New Roman', serif;
+  --font-mono: 'JetBrains Mono', ui-monospace, SFMono-Regular, monospace;
+
+  /* Geometry & Elevation */
+  --radius-card: 1rem;
+  --radius-control: 0.65rem;
+  --radius-pill: 9999px;
+  --border-width: 1px;
+  --surface-alpha: 0.72;
+  --surface-muted-alpha: 0.56;
+  --surface-blur: 18px;
+  --border-alpha: 0.28;
+  --shadow-card: 0 10px 32px -12px rgba(15, 23, 42, 0.1), inset 0 1px 0 rgba(255, 255, 255, 0.7);
+  --shadow-card-hover: 0 18px 42px -14px rgba(15, 23, 42, 0.16), inset 0 1px 0 rgba(255, 255, 255, 0.85);
+
+  /* Ambient Backdrop */
+  --canvas-backdrop:
+    radial-gradient(circle at 12% 8%, rgba(112, 24, 41, 0.08), transparent 42%),
+    radial-gradient(circle at 88% 14%, rgba(176, 124, 36, 0.09), transparent 38%),
+    radial-gradient(circle at 50% 65%, rgba(30, 58, 138, 0.05), transparent 48%);
+}
+
+[data-theme='swiss'] {
+  /* Core Palette */
+  --color-canvas: 249 248 245;
+  --color-surface: 255 255 255;
+  --color-surface-muted: 240 238 233;
+  --color-ink: 17 17 19;
+  --color-ink-muted: 82 82 91;
+  --color-accent: 130 22 38;
+  --color-accent-strong: 92 14 26;
+  --color-accent-secondary: 162 112 28;
+  --color-border: 24 24 27;
+
+  /* Typography */
+  --font-sans: 'Inter', 'Helvetica Neue', Arial, sans-serif;
+  --font-serif: 'Inter', 'Helvetica Neue', Arial, sans-serif;
+  --font-mono: 'JetBrains Mono', ui-monospace, monospace;
+
+  /* Geometry & Elevation */
+  --radius-card: 0.125rem;
+  --radius-control: 0.125rem;
+  --radius-pill: 0.125rem;
+  --border-width: 1px;
+  --surface-alpha: 1;
+  --surface-muted-alpha: 1;
+  --surface-blur: 0px;
+  --border-alpha: 0.16;
+  --shadow-card: none;
+  --shadow-card-hover: none;
+
+  /* Crisp Grid Backdrop */
+  --canvas-backdrop: none;
+}
+
