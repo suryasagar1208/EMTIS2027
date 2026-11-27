@@ -83,10 +83,14 @@ export function GaneshaAssistantModal({
       setIsLoading(true);
       setInputText('');
 
+      const controller = new AbortController();
+      const timeoutId = window.setTimeout(() => controller.abort(), 25000);
+
       try {
         const res = await fetch('/api/ganesha/chat', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
+          signal: controller.signal,
           body: JSON.stringify({
             message: cleaned,
             history: historyPayload,
@@ -94,8 +98,24 @@ export function GaneshaAssistantModal({
           }),
         });
 
-        const data = await res.json();
-        if (!res.ok || !data.ok) {
+        const rawText = await res.text();
+        let data: {
+          ok?: boolean;
+          message?: string;
+          reply?: string;
+          language?: string;
+          sources?: string[];
+          engine?: string;
+        } = {};
+        try {
+          data = rawText ? JSON.parse(rawText) : {};
+        } catch {
+          throw new Error(
+            'Ganesha API returned an unexpected response. Ensure backend /api routes are deployed.'
+          );
+        }
+
+        if (!res.ok || !data.ok || !data.reply) {
           throw new Error(data.message || 'Unable to reach Ganesha AI service.');
         }
 
@@ -117,11 +137,17 @@ export function GaneshaAssistantModal({
         await speak(data.reply, data.language || 'en');
       } catch (err) {
         setIsLoading(false);
-        setErrorMsg(
-          err instanceof Error
-            ? err.message
-            : 'Unable to contact Ganesha backend. Ensure the server is running.'
-        );
+        if (err instanceof DOMException && err.name === 'AbortError') {
+          setErrorMsg('Request timed out. Please check your connection and try again.');
+        } else {
+          setErrorMsg(
+            err instanceof Error
+              ? err.message
+              : 'Unable to contact Ganesha backend. Ensure the server is running.'
+          );
+        }
+      } finally {
+        window.clearTimeout(timeoutId);
       }
     },
     // eslint-disable-next-line react-hooks/exhaustive-deps

@@ -1,14 +1,17 @@
 import http from 'node:http';
-import fs from 'node:fs/promises';
 import fsSync from 'node:fs';
 import path from 'node:path';
-import crypto from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import {
   GANESHA_OPENING_GREETING,
   generateGaneshaReply,
 } from './ganesha/assistant.mjs';
 import { BROCHURE_CHUNKS } from './rag/brochureKnowledge.mjs';
+import {
+  createInquiryRecord,
+  createRegistrationRecord,
+  ensureDb,
+} from './lib/store.mjs';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const ROOT_DIR = path.join(__dirname, '..');
@@ -33,42 +36,7 @@ if (fsSync.existsSync(envPath)) {
   }
 }
 
-const DATA_DIR = path.join(__dirname, 'data');
-const DB_FILE = path.join(DATA_DIR, 'db.json');
 const PORT = Number(process.env.API_PORT || 3001);
-
-const VALID_CATEGORIES = new Map([
-  ['faculty', { label: 'Faculty / Academicians', early: '₹2,500', regular: '₹3,000' }],
-  ['industry', { label: 'Industry Professionals', early: '₹3,500', regular: '₹4,000' }],
-  ['scholars', { label: 'Research Scholars / PG', early: '₹1,500', regular: '₹2,000' }],
-  ['ug', { label: 'UG Students', early: '₹800', regular: '₹1,000' }],
-  ['attendee', { label: 'Non-presenting Co-author / Attendee', early: '₹500', regular: '₹500' }],
-]);
-
-const VALID_TRACKS = new Set(['T1', 'T2', 'T3', 'T4', 'T5', 'T6', 'T7', 'T8', 'NONE']);
-const EMAIL_REGEX = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
-
-async function ensureDb() {
-  await fs.mkdir(DATA_DIR, { recursive: true });
-  try {
-    const raw = await fs.readFile(DB_FILE, 'utf8');
-    const parsed = JSON.parse(raw);
-    return {
-      registrations: Array.isArray(parsed.registrations) ? parsed.registrations : [],
-      inquiries: Array.isArray(parsed.inquiries) ? parsed.inquiries : [],
-    };
-  } catch {
-    const initial = { registrations: [], inquiries: [] };
-    await fs.writeFile(DB_FILE, JSON.stringify(initial, null, 2), 'utf8');
-    return initial;
-  }
-}
-
-async function saveDb(db) {
-  const tmpFile = `${DB_FILE}.${crypto.randomUUID()}.tmp`;
-  await fs.writeFile(tmpFile, JSON.stringify(db, null, 2), 'utf8');
-  await fs.rename(tmpFile, DB_FILE);
-}
 
 function sendJson(res, status, payload) {
   res.writeHead(status, {
@@ -97,87 +65,6 @@ function readJsonBody(req, maxBytes = 64 * 1024) {
     });
     req.on('error', reject);
   });
-}
-
-function validateRegistration(input) {
-  const errors = {};
-  const fullName = String(input.fullName ?? '').trim();
-  const email = String(input.email ?? '').trim().toLowerCase();
-  const phone = String(input.phone ?? '').trim();
-  const affiliation = String(input.affiliation ?? '').trim();
-  const categoryId = String(input.categoryId ?? '').trim();
-  const participationType = String(input.participationType ?? 'presenter').trim();
-  const trackCode = String(input.trackCode ?? 'T1').trim();
-  const paperTitle = String(input.paperTitle ?? '').trim();
-  const accommodationRequested = Boolean(input.accommodationRequested);
-
-  if (fullName.length < 2 || fullName.length > 120) {
-    errors.fullName = 'Please enter your full name (2–120 characters).';
-  }
-  if (!EMAIL_REGEX.test(email)) {
-    errors.email = 'Please enter a valid email address.';
-  }
-  const digits = phone.replace(/\D/g, '');
-  if (digits.length < 10 || digits.length > 15) {
-    errors.phone = 'Please enter a valid phone number (10–15 digits).';
-  }
-  if (affiliation.length < 2 || affiliation.length > 160) {
-    errors.affiliation = 'Please enter your institution or organisation.';
-  }
-  if (!VALID_CATEGORIES.has(categoryId)) {
-    errors.categoryId = 'Please select a valid registration category.';
-  }
-  if (participationType !== 'presenter' && participationType !== 'attendee') {
-    errors.participationType = 'Please select a valid participation type.';
-  }
-  if (participationType === 'presenter' && (!VALID_TRACKS.has(trackCode) || trackCode === 'NONE')) {
-    errors.trackCode = 'Please select a technical track (T1–T8) for presentation.';
-  }
-  if (participationType === 'presenter' && paperTitle.length > 0 && paperTitle.length < 5) {
-    errors.paperTitle = 'Paper title must be at least 5 characters if provided.';
-  }
-
-  return {
-    errors,
-    cleaned: {
-      fullName,
-      email,
-      phone,
-      affiliation,
-      categoryId,
-      participationType,
-      trackCode: participationType === 'attendee' ? 'NONE' : trackCode,
-      paperTitle,
-      accommodationRequested,
-    },
-  };
-}
-
-function validateInquiry(input) {
-  const errors = {};
-  const name = String(input.name ?? '').trim();
-  const email = String(input.email ?? '').trim().toLowerCase();
-  const affiliation = String(input.affiliation ?? '').trim();
-  const subject = String(input.subject ?? '').trim();
-  const message = String(input.message ?? '').trim();
-
-  if (name.length < 2 || name.length > 120) {
-    errors.name = 'Please enter your name (at least 2 characters).';
-  }
-  if (!EMAIL_REGEX.test(email)) {
-    errors.email = 'Please enter a valid email address so the Convenor can reply.';
-  }
-  if (subject.length < 3 || subject.length > 140) {
-    errors.subject = 'Please select or enter an enquiry subject.';
-  }
-  if (message.length < 10 || message.length > 2000) {
-    errors.message = 'Please enter an enquiry message (10–2000 characters).';
-  }
-
-  return {
-    errors,
-    cleaned: { name, email, affiliation, subject, message },
-  };
 }
 
 const server = http.createServer(async (req, res) => {
@@ -336,58 +223,8 @@ const server = http.createServer(async (req, res) => {
   if (req.method === 'POST' && url.pathname === '/api/registrations') {
     try {
       const body = await readJsonBody(req);
-      const { errors, cleaned } = validateRegistration(body);
-      if (Object.keys(errors).length > 0) {
-        return sendJson(res, 400, {
-          ok: false,
-          message: 'Please review the highlighted registration fields.',
-          errors,
-        });
-      }
-
-      const db = await ensureDb();
-      const duplicate = db.registrations.find(
-        (item) => item.email === cleaned.email && item.categoryId === cleaned.categoryId
-      );
-      if (duplicate) {
-        return sendJson(res, 409, {
-          ok: false,
-          message: `A registration record for ${cleaned.email} under this category already exists (Ref: ${duplicate.referenceId}).`,
-          referenceId: duplicate.referenceId,
-        });
-      }
-
-      const feeMeta = VALID_CATEGORIES.get(cleaned.categoryId);
-      const referenceId = `ETIMS27-REG-${crypto.randomBytes(3).toString('hex').toUpperCase()}`;
-      const record = {
-        referenceId,
-        ...cleaned,
-        categoryLabel: feeMeta.label,
-        earlyFeeInr: feeMeta.early,
-        regularFeeInr: feeMeta.regular,
-        paymentStatus: 'Pending official portal & payment confirmation',
-        createdAt: new Date().toISOString(),
-      };
-
-      db.registrations.push(record);
-      await saveDb(db);
-
-      return sendJson(res, 201, {
-        ok: true,
-        message: 'Delegate pre-registration recorded successfully.',
-        registration: {
-          referenceId: record.referenceId,
-          fullName: record.fullName,
-          email: record.email,
-          categoryLabel: record.categoryLabel,
-          earlyFeeInr: record.earlyFeeInr,
-          regularFeeInr: record.regularFeeInr,
-          trackCode: record.trackCode,
-          accommodationRequested: record.accommodationRequested,
-          paymentStatus: record.paymentStatus,
-          createdAt: record.createdAt,
-        },
-      });
+      const { status, payload } = await createRegistrationRecord(body);
+      return sendJson(res, status, payload);
     } catch (err) {
       return sendJson(res, 400, {
         ok: false,
@@ -399,37 +236,8 @@ const server = http.createServer(async (req, res) => {
   if (req.method === 'POST' && url.pathname === '/api/contact') {
     try {
       const body = await readJsonBody(req);
-      const { errors, cleaned } = validateInquiry(body);
-      if (Object.keys(errors).length > 0) {
-        return sendJson(res, 400, {
-          ok: false,
-          message: 'Please correct the highlighted enquiry fields.',
-          errors,
-        });
-      }
-
-      const db = await ensureDb();
-      const referenceId = `ETIMS27-ENQ-${crypto.randomBytes(3).toString('hex').toUpperCase()}`;
-      const record = {
-        referenceId,
-        ...cleaned,
-        createdAt: new Date().toISOString(),
-      };
-
-      db.inquiries.push(record);
-      await saveDb(db);
-
-      return sendJson(res, 201, {
-        ok: true,
-        message: 'Your enquiry has been recorded for the Conference Convenor.',
-        inquiry: {
-          referenceId: record.referenceId,
-          name: record.name,
-          email: record.email,
-          subject: record.subject,
-          createdAt: record.createdAt,
-        },
-      });
+      const { status, payload } = await createInquiryRecord(body);
+      return sendJson(res, status, payload);
     } catch (err) {
       return sendJson(res, 400, {
         ok: false,
@@ -446,4 +254,3 @@ ensureDb().then(() => {
     console.log(`ETIMS 2027 API server listening on http://127.0.0.1:${PORT}`);
   });
 });
-

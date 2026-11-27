@@ -1,10 +1,12 @@
 import fs from 'node:fs/promises';
+import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { BROCHURE_CHUNKS } from './brochureKnowledge.mjs';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
-const VECTOR_CACHE_FILE = path.join(__dirname, '..', 'data', 'vector_store.json');
+const BUNDLED_VECTOR_FILE = path.join(__dirname, '..', 'data', 'vector_store.json');
+const TMP_VECTOR_FILE = path.join(os.tmpdir(), 'etims-2027-vector-store.json');
 
 function tokenize(text) {
   return String(text || '')
@@ -27,7 +29,7 @@ function cosineSimilarity(a, b) {
   return dot / (Math.sqrt(normA) * Math.sqrt(normB));
 }
 
-async function fetchEmbedding(text, apiKey, model) {
+async function fetchEmbeddingsBatch(inputs, apiKey, model) {
   const res = await fetch('https://api.openai.com/v1/embeddings', {
     method: 'POST',
     headers: {
@@ -36,7 +38,7 @@ async function fetchEmbedding(text, apiKey, model) {
     },
     body: JSON.stringify({
       model,
-      input: text,
+      input: inputs,
     }),
   });
   if (!res.ok) {
@@ -44,45 +46,70 @@ async function fetchEmbedding(text, apiKey, model) {
     throw new Error(`OpenAI Embeddings error (${res.status}): ${errText}`);
   }
   const data = await res.json();
-  return data.data[0].embedding;
+  return data.data
+    .sort((a, b) => a.index - b.index)
+    .map((item) => item.embedding);
 }
 
 let cachedVectorIndex = null;
 
-async function ensureOpenAIVectorIndex(apiKey, embeddingModel) {
-  if (cachedVectorIndex) return cachedVectorIndex;
-
+async function readVectorCache(filePath, embeddingModel) {
   try {
-    const raw = await fs.readFile(VECTOR_CACHE_FILE, 'utf8');
+    const raw = await fs.readFile(filePath, 'utf8');
     const parsed = JSON.parse(raw);
     if (
       parsed.model === embeddingModel &&
       Array.isArray(parsed.chunks) &&
       parsed.chunks.length === BROCHURE_CHUNKS.length
     ) {
-      cachedVectorIndex = parsed.chunks;
-      return cachedVectorIndex;
+      return parsed.chunks;
     }
   } catch {
-    // Cache not yet created
+    // File missing or invalid
+  }
+  return null;
+}
+
+async function writeVectorCache(payload) {
+  const targets = process.env.VERCEL
+    ? [TMP_VECTOR_FILE]
+    : [BUNDLED_VECTOR_FILE, TMP_VECTOR_FILE];
+
+  for (const target of targets) {
+    try {
+      await fs.mkdir(path.dirname(target), { recursive: true });
+      await fs.writeFile(target, JSON.stringify(payload), 'utf8');
+      return;
+    } catch {
+      // Read-only filesystem (e.g., EROFS in serverless bundle); try next target
+    }
+  }
+}
+
+async function ensureOpenAIVectorIndex(apiKey, embeddingModel) {
+  if (cachedVectorIndex) return cachedVectorIndex;
+
+  const fromBundle = await readVectorCache(BUNDLED_VECTOR_FILE, embeddingModel);
+  if (fromBundle) {
+    cachedVectorIndex = fromBundle;
+    return cachedVectorIndex;
   }
 
-  const vectors = [];
-  for (const chunk of BROCHURE_CHUNKS) {
-    const embedding = await fetchEmbedding(
-      `${chunk.topic}\n${chunk.text}`,
-      apiKey,
-      embeddingModel
-    );
-    vectors.push({ id: chunk.id, embedding });
+  const fromTmp = await readVectorCache(TMP_VECTOR_FILE, embeddingModel);
+  if (fromTmp) {
+    cachedVectorIndex = fromTmp;
+    return cachedVectorIndex;
   }
 
-  await fs.mkdir(path.dirname(VECTOR_CACHE_FILE), { recursive: true });
-  await fs.writeFile(
-    VECTOR_CACHE_FILE,
-    JSON.stringify({ model: embeddingModel, chunks: vectors }),
-    'utf8'
-  );
+  // Batch all brochure chunks into a single embeddings API request to avoid cold-start timeouts
+  const inputs = BROCHURE_CHUNKS.map((chunk) => `${chunk.topic}\n${chunk.text}`);
+  const embeddings = await fetchEmbeddingsBatch(inputs, apiKey, embeddingModel);
+  const vectors = BROCHURE_CHUNKS.map((chunk, idx) => ({
+    id: chunk.id,
+    embedding: embeddings[idx],
+  }));
+
+  await writeVectorCache({ model: embeddingModel, chunks: vectors });
   cachedVectorIndex = vectors;
   return cachedVectorIndex;
 }
@@ -120,7 +147,7 @@ export async function retrieveRelevantBrochureChunks(query, options = {}) {
   if (apiKey) {
     try {
       const index = await ensureOpenAIVectorIndex(apiKey, embeddingModel);
-      const qVec = await fetchEmbedding(query, apiKey, embeddingModel);
+      const [qVec] = await fetchEmbeddingsBatch([query], apiKey, embeddingModel);
       const scored = BROCHURE_CHUNKS.map((chunk, idx) => {
         const vectorSim = cosineSimilarity(qVec, index[idx].embedding);
         const lexBoost = Math.min(scoreLexicalChunk(query, chunk) * 0.02, 0.18);
@@ -145,4 +172,3 @@ export async function retrieveRelevantBrochureChunks(query, options = {}) {
 
   return scored.slice(0, topK);
 }
-
