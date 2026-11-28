@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import type { GaneshaState } from '@/components/Ganesha/GaneshaOrb';
+import { readJsonSafely } from '@/utils/http';
 
 export type LanguagePreference = 'auto' | 'en' | 'hi';
 
@@ -325,14 +326,17 @@ export function useGaneshaVoice({
               headers: { 'Content-Type': 'application/json' },
               body: JSON.stringify({ audioBase64: base64, mimeType: blob.type }),
             });
-            const data = await res.json();
+            const { data, isJson } = await readJsonSafely<{
+              transcript?: string;
+              message?: string;
+            }>(res);
             setVoiceState('idle');
-            if (res.ok && data.transcript) {
+            if (isJson && res.ok && data?.transcript) {
               onTranscript(data.transcript);
             } else {
               onError(
-                data.message ||
-                  'Browser speech recognition unavailable and Whisper STT requires OPENAI_API_KEY in .env.'
+                data?.message ||
+                  'Browser speech recognition unavailable and Whisper STT requires OPENAI_API_KEY on the backend.'
               );
             }
           } catch {

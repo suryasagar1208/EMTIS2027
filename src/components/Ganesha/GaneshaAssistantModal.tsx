@@ -16,6 +16,7 @@ import {
   useGaneshaVoice,
   type LanguagePreference,
 } from '@/hooks/useGaneshaVoice';
+import { readJsonSafely } from '@/utils/http';
 
 export const OPENING_GREETING = "Hey! I'm Ganesha. How can I help you?";
 
@@ -98,20 +99,18 @@ export function GaneshaAssistantModal({
           }),
         });
 
-        const rawText = await res.text();
-        let data: {
+        const { data, isJson } = await readJsonSafely<{
           ok?: boolean;
           message?: string;
           reply?: string;
           language?: string;
           sources?: string[];
           engine?: string;
-        } = {};
-        try {
-          data = rawText ? JSON.parse(rawText) : {};
-        } catch {
+        }>(res);
+
+        if (!isJson || !data) {
           throw new Error(
-            'Ganesha API returned an unexpected response. Ensure backend /api routes are deployed.'
+            `Ganesha API returned a non-JSON response (HTTP ${res.status}). Ensure /api/ganesha/chat is deployed.`
           );
         }
 
@@ -201,11 +200,11 @@ export function GaneshaAssistantModal({
     }
 
     fetch('/api/ganesha/status')
-      .then((r) => r.json())
-      .then((d) => {
-        if (d?.ragEngine) setEngineBadge(d.ragEngine);
+      .then((r) => readJsonSafely<{ ragEngine?: 'openai-vector-rag' | 'pdf-lexical-rag' }>(r))
+      .then(({ data }) => {
+        if (data?.ragEngine) setEngineBadge(data.ragEngine);
       })
-      .catch(() => {});
+      .catch(() => { });
 
     if (!greetedForOpenRef.current) {
       greetedForOpenRef.current = true;
@@ -403,16 +402,14 @@ export function GaneshaAssistantModal({
               {messages.map((msg) => (
                 <div
                   key={msg.id}
-                  className={`flex ${
-                    msg.role === 'user' ? 'justify-end' : 'justify-start'
-                  }`}
+                  className={`flex ${msg.role === 'user' ? 'justify-end' : 'justify-start'
+                    }`}
                 >
                   <div
-                    className={`max-w-[88%] rounded-2xl px-4 py-3 text-sm leading-relaxed sm:max-w-[78%] ${
-                      msg.role === 'user'
+                    className={`max-w-[88%] rounded-2xl px-4 py-3 text-sm leading-relaxed sm:max-w-[78%] ${msg.role === 'user'
                         ? 'bg-rose-800/90 text-white'
                         : 'border border-white/10 bg-white/[0.07] text-slate-100'
-                    }`}
+                      }`}
                   >
                     <div className="whitespace-pre-line">{msg.content}</div>
 
@@ -501,11 +498,10 @@ export function GaneshaAssistantModal({
                     ? 'Stop listening'
                     : 'Tap to speak (English / Hindi)'
                 }
-                className={`inline-flex h-11 w-11 shrink-0 items-center justify-center rounded-full border transition-all ${
-                  voiceState === 'listening'
+                className={`inline-flex h-11 w-11 shrink-0 items-center justify-center rounded-full border transition-all ${voiceState === 'listening'
                     ? 'border-emerald-300 bg-emerald-500 text-slate-950 shadow-lg shadow-emerald-500/30'
                     : 'border-white/20 bg-white/10 text-white hover:bg-white/20'
-                }`}
+                  }`}
               >
                 {voiceState === 'listening' ? (
                   <MicOff className="h-5 w-5" aria-hidden="true" />

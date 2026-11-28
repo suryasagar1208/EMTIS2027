@@ -16,6 +16,7 @@ import { SectionHeading } from '@/components/SectionHeading/SectionHeading';
 import { RegistrationTable } from '@/components/RegistrationTable/RegistrationTable';
 import { PrimaryButton, SecondaryLinkButton } from '@/components/Buttons/ActionButtons';
 import { Reveal } from '@/components/animations/MotionPrimitives';
+import { readJsonSafely } from '@/utils/http';
 
 interface RegistrationSectionProps {
   theme: ThemeId;
@@ -126,8 +127,19 @@ export function RegistrationSection({ theme }: RegistrationSectionProps) {
         }),
       });
 
-      const data = await response.json();
-      if (!response.ok || !data.ok) {
+      const { data, isJson } = await readJsonSafely<{
+        ok?: boolean;
+        message?: string;
+        errors?: FieldErrors;
+        registration?: RegistrationReceipt;
+      }>(response);
+      if (!isJson || !data) {
+        setErrors({
+          form: `Registration server returned an unexpected response (HTTP ${response.status}).`,
+        });
+        return;
+      }
+      if (!response.ok || !data.ok || !data.registration) {
         setErrors({
           ...(data.errors || {}),
           form: data.message || 'Unable to submit registration. Please verify your details.',
@@ -135,7 +147,7 @@ export function RegistrationSection({ theme }: RegistrationSectionProps) {
         return;
       }
 
-      setReceipt(data.registration as RegistrationReceipt);
+      setReceipt(data.registration);
     } catch {
       setErrors({
         form: 'Unable to reach the ETIMS 2027 registration server. Ensure the backend API server is running and try again.',

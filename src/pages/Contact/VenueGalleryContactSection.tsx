@@ -19,6 +19,7 @@ import { SectionHeading } from '@/components/SectionHeading/SectionHeading';
 import { Gallery } from '@/components/Gallery/Gallery';
 import { PrimaryButton, SecondaryLinkButton } from '@/components/Buttons/ActionButtons';
 import { Reveal } from '@/components/animations/MotionPrimitives';
+import { readJsonSafely } from '@/utils/http';
 
 interface VenueGalleryContactProps {
   theme: ThemeId;
@@ -207,7 +208,18 @@ export function ContactSection({ theme }: VenueGalleryContactProps) {
           message: message.trim(),
         }),
       });
-      const data = await response.json();
+      const { data, isJson } = await readJsonSafely<{
+        ok?: boolean;
+        message?: string;
+        errors?: Record<string, string>;
+        inquiry?: { referenceId?: string };
+      }>(response);
+      if (!isJson || !data) {
+        setErrors({
+          form: `Enquiry server returned an unexpected response (HTTP ${response.status}). You can also email us directly below.`,
+        });
+        return;
+      }
       if (!response.ok || !data.ok) {
         setErrors({
           ...(data.errors || {}),
